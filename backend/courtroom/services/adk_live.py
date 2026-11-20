@@ -29,9 +29,9 @@ def build_bench_instructions(side: str, case_data: Optional[Dict[str, Any]] = No
     facts = []
     if case_data:
         if "facts" in case_data and isinstance(case_data["facts"], list):
-            facts = case_data["facts"][:5]
+            facts = case_data["facts"][:12]
         elif "proposition_paragraphs" in case_data:
-            facts = [p.get("text", "") for p in case_data["proposition_paragraphs"] if isinstance(p, dict)][:5]
+            facts = [p.get("text", "") for p in case_data["proposition_paragraphs"] if isinstance(p, dict)][:12]
     if not facts:
         facts = [
             "FIR registered under Section 316(2) and Section 318(4) Bharatiya Nyaya Sanhita (BNS), 2023.",
@@ -77,6 +77,17 @@ RULES OF ADVOCACY & TWO-WAY INTERRUPTIONS:
 4. Advocate Interruption: If counsel interrupts with the Court's leave ("With respect, my Lords..."), acknowledge it immediately: "[J1] Very well, Counsel. Be brief. What is your clarification?"
 5. Citation Auditing: If counsel cites an unverified, fake, or misquoted precedent, challenge them instantly: "[J3] Counsel, which law report records that proposition? Cite the paragraph."
 6. Decorum: Maintain Indian High Court appellate solemnity at all times. Never mention AI, LLMs, or software models.
+
+VOICE, CADENCE & INDIAN PHONETIC DIRECTIVES:
+1. Speak in authentic Indian English with the dignity, intonation, and cadence of senior Indian High Court and Supreme Court judges.
+2. Judicial Cadence: Deliberate, stern, articulate, and commanding. Avoid rushed delivery or monotone robot voices.
+3. Legal Phonetics:
+   - Pronounce Indian statutory acronyms letter by letter: "B-N-S-S", "B-N-S", "B-S-A", "C-r-P-C", "I-P-C", "F-I-R", "I-O", "N-B-W".
+   - Say "Section 35 subsection 3", not "sec thirty-five three".
+   - Say "Rupees 4.2 crore", not "rupee 4 point 2".
+   - Say "Exhibit P-3", not "ex p 3".
+   - Say "versus", not "v dot".
+   - Say "Paragraph", not "para" or "symbol".
 """
 
 
@@ -123,11 +134,14 @@ class ADKHearingSession:
         """Pushes counsel interjection / interruption to the bench."""
         await self._input_queue.put({"type": "interrupt", "text": text})
 
-    async def call_witness(self, witness_name: str = "Inspector Vikrant Rane"):
-        """Switches session into witness examination mode."""
-        self.witness_mode = True
+    async def call_witness(self, witness_name: str = "Inspector Vikrant Rane", role: str = "", says: str = ""):
+        """Calls a witness to the box; the send loop switches the session into witness mode."""
         self.witness_name = witness_name
-        await self._input_queue.put({"type": "system", "action": "call_witness", "name": witness_name})
+        await self._input_queue.put({"type": "system", "action": "call_witness", "name": witness_name, "role": role, "says": says})
+
+    async def push_action(self, item: Dict[str, Any]):
+        """Queues a court action (cut_in, release_witness, tender) for the live session."""
+        await self._input_queue.put(item)
 
     def _determine_speaker(self, text: str) -> tuple[str, str]:
         """Maps turn prefix to UI participant avatar and label."""
@@ -189,7 +203,7 @@ class ADKHearingSession:
                 break
 
     async def _run_live_pipeline(self):
-        """Orchestrates the bidirectional Gemini Live session with resilient fallback."""
+        """Runs the Gemini Live session: one task streams counsel input in, another streams the Bench out."""
         try:
             case_data = get_case_data(self.case_id)
             system_instruction_text = build_bench_instructions(self.side, case_data)
@@ -197,9 +211,10 @@ class ADKHearingSession:
             live_config = types.LiveConnectConfig(
                 response_modalities=['AUDIO'],
                 output_audio_transcription=types.AudioTranscriptionConfig(),
+                input_audio_transcription=types.AudioTranscriptionConfig(),
                 speech_config=types.SpeechConfig(
                     voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Fenrir")
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=settings.live_voice)
                     )
                 ),
                 system_instruction=types.Content(parts=[types.Part.from_text(text=system_instruction_text)])
@@ -207,144 +222,131 @@ class ADKHearingSession:
 
             client = self._client or settings.get_live_client()
             live_model = settings.model_live
-
             logger.info(f"Connecting to Gemini Live with model {live_model} for side '{self.side}'...")
             async with client.aio.live.connect(model=live_model, config=live_config) as session:
                 self._live_session = session
-                logger.info("Successfully established Gemini Live bidi connection.")
-
-                # Prompt opening question based on student's side
-                is_petitioner = "petitioner" in self.side.lower() or "applicant" in self.side.lower()
-                opening_cue = (
-                    f"The court is in session. The advocate appears as Counsel for the Petitioner. Deliver your opening judicial interrogation as [J1] Presiding Judge, testing non-compliance with the Section 35(3) notice and maintainability under Section 482 BNSS."
-                    if is_petitioner else
-                    f"The court is in session. The advocate appears as Counsel for the State/Respondent. Deliver your opening judicial interrogation as [J1] Presiding Judge, demanding why custodial interrogation is needed when records are already seized, challenging the State under Arnesh Kumar."
-                )
-
-                await session.send_client_content(
-                    turns=[types.Content(parts=[types.Part.from_text(text=opening_cue)])],
-                    turn_complete=True
-                )
-
-                # Process first turn from Gemini
-                await self._collect_gemini_turn(session)
-
-                # Event loop for advocate input & interruptions
-                while self.is_running:
-                    item = await self._input_queue.get()
-                    item_type = item.get("type")
-
-                    if item_type == "audio":
-                        raw_bytes = item.get("bytes")
-                        if raw_bytes:
-                            await session.send_realtime_input(
-                                audio=types.Blob(data=raw_bytes, mime_type="audio/pcm;rate=16000")
-                            )
-
-                    elif item_type == "text":
-                        user_text = item.get("text", "")
-                        self.turn_count += 1
-                        asyncio.create_task(self._verify_and_emit_citations(user_text))
-
-                        if self.witness_mode:
-                            prompt = f"[Counsel cross-examines {self.witness_name}]: {user_text}\nRespond as [W] {self.witness_name} consistently with your statement."
-                        else:
-                            prompt = f"[Counsel ({self.side}) argues]: {user_text}\nEvaluate this submission from the advocate for the {self.side}, challenge its flaws, and formulate the next sharp judicial interruption or question."
-
-                        await session.send_client_content(
-                            turns=[types.Content(parts=[types.Part.from_text(text=prompt)])],
-                            turn_complete=True
-                        )
-                        await self._collect_gemini_turn(session)
-
-                    elif item_type == "interrupt":
-                        user_text = item.get("text", "With the Court's leave, Counsel wishes to address that point directly.")
-                        prompt = f"[Counsel ({self.side}) interjects with the Court's permission]: '{user_text}'\nAcknowledge the advocate's interjection immediately as [J1] or [J2], evaluate their clarification, and challenge it pointedly."
-                        await session.send_client_content(
-                            turns=[types.Content(parts=[types.Part.from_text(text=prompt)])],
-                            turn_complete=True
-                        )
-                        await self._collect_gemini_turn(session)
-
-                    elif item_type == "system" and item.get("action") == "call_witness":
-                        w_name = item.get("name", "Inspector Vikrant Rane")
-                        await self._output_queue.put({
-                            "type": "transcript",
-                            "speaker": "Court Master",
-                            "who": "clerk",
-                            "text": f"Witness {w_name} takes the virtual witness stand. Counsel may proceed with examination."
-                        })
-                        await session.send_client_content(
-                            turns=[types.Content(parts=[types.Part.from_text(
-                                text=f"The court calls {w_name} to the witness stand. Acknowledge as [W] that you are sworn in."
-                            )])],
-                            turn_complete=True
-                        )
-                        await self._collect_gemini_turn(session)
-
+                title = (case_data or {}).get("title", "this matter")
+                await self._send_cue(session, (
+                    f"The court is in session in {title}. The advocate appears for the {self.side}. "
+                    "As [J1] Presiding Judge, invite counsel to begin in one short sentence."
+                ))
+                receiver = asyncio.create_task(self._receive_loop(session))
+                try:
+                    await self._send_loop(session)
+                finally:
+                    receiver.cancel()
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.warning(f"Gemini Live session interrupted: {e}. Falling back to resilient mode.")
             await self._run_fallback_loop()
 
-    async def _collect_gemini_turn(self, session):
-        """Streams audio chunks and captions from Gemini Live until turn completion."""
-        current_text_parts = []
-        current_who = "J1"
-        current_speaker = "Hon'ble Presiding Judge"
+    async def _send_cue(self, session, text: str):
+        await session.send_client_content(
+            turns=[types.Content(role="user", parts=[types.Part.from_text(text=text)])],
+            turn_complete=True
+        )
 
-        async for resp in session.receive():
-            sc = resp.server_content
-            if not sc:
-                continue
-
-            # 1. Output audio transcription (real-time captions)
-            if sc.output_transcription and sc.output_transcription.text:
-                chunk_text = sc.output_transcription.text
-                current_text_parts.append(chunk_text)
-                accumulated = "".join(current_text_parts)
-
-                who, speaker = self._determine_speaker(accumulated)
-                current_who = who
-                current_speaker = speaker
-
+    async def _send_loop(self, session):
+        """Forwards counsel audio, typed submissions and court actions to Gemini Live."""
+        while self.is_running:
+            item = await self._input_queue.get()
+            kind = item.get("type")
+            if kind == "audio":
+                if item.get("bytes"):
+                    await session.send_realtime_input(
+                        audio=types.Blob(data=item["bytes"], mime_type="audio/pcm;rate=16000")
+                    )
+            elif kind == "text":
+                user_text = item.get("text", "")
+                self.turn_count += 1
+                asyncio.create_task(self._verify_and_emit_citations(user_text))
+                if self.witness_mode:
+                    prompt = f"[Counsel examines {self.witness_name}]: {user_text}\nRespond as [W] {self.witness_name}, consistent with the record."
+                else:
+                    prompt = f"[Counsel ({self.side})]: {user_text}\nRespond as the Bench or [OC]: test the weakest point with ONE sharp question."
+                await self._send_cue(session, prompt)
+            elif kind == "interrupt":
+                await self._send_cue(session, (
+                    f"[Counsel ({self.side}) seeks leave]: '{item.get('text', '')}'\n"
+                    "As [J1], grant leave in a few words (e.g. 'Yes, Counsel. Briefly.') and let counsel speak."
+                ))
+            elif kind == "cut_in":
+                await self._send_cue(session, (
+                    "Counsel has now spoken for over 40 seconds without answering. As [J1], cut in: "
+                    "'Counsel, let us stop you there.' and demand a direct yes-or-no answer to the last question."
+                ))
+            elif kind == "system" and item.get("action") == "call_witness":
+                self.witness_mode = True
+                w_name = item.get("name", self.witness_name)
                 await self._output_queue.put({
-                    "type": "caption",
-                    "who": current_who,
-                    "speaker": current_speaker,
-                    "text": self._strip_prefix(accumulated)
+                    "type": "transcript", "speaker": "Court Master", "who": "clerk",
+                    "text": f"{w_name} is called to the witness box and takes the oath."
                 })
+                await self._send_cue(session, (
+                    f"The court calls {w_name} ({item.get('role', '')}) to the witness box. "
+                    f"Their account: {item.get('says', 'as per the record')}. "
+                    "From now on, when counsel questions the witness, answer as [W] in character. Acknowledge the oath as [W] in one sentence."
+                ))
+            elif kind == "system" and item.get("action") == "release_witness":
+                self.witness_mode = False
+                await self._send_cue(session, "The witness steps down. Resume as the Bench: [J1] tells counsel to proceed.")
+            elif kind == "system" and item.get("action") == "tender":
+                await self._send_cue(session, (
+                    f"Counsel tenders Annexure {item.get('id')}: {item.get('title')}. "
+                    "[OC] objects briefly to authenticity, then [J1] takes it on record subject to objection and asks counsel to point to the relevant entry."
+                ))
 
-            # 2. Audio chunks (PCM 24kHz)
-            if sc.model_turn:
-                for part in sc.model_turn.parts:
-                    if part.inline_data and part.inline_data.data:
-                        raw_audio = part.inline_data.data
-                        if len(raw_audio) % 2 != 0:
-                            raw_audio = raw_audio[:-1]
-                        b64_audio = base64.b64encode(raw_audio).decode("utf-8")
-                        await self._output_queue.put({
-                            "type": "audio",
-                            "audio": b64_audio
-                        })
+    async def _receive_loop(self, session):
+        """Streams Bench audio, live captions and counsel's own transcribed speech back to the client."""
+        out_parts: List[str] = []
+        counsel_parts: List[str] = []
 
-            # 3. Turn complete
-            if sc.turn_complete:
-                full_raw = "".join(current_text_parts)
-                final_text = self._strip_prefix(full_raw) or f"Counsel for the {self.side}, state your grounds under Section 482 BNSS."
-                who, speaker = self._determine_speaker(full_raw)
+        async def flush_counsel():
+            said = "".join(counsel_parts).strip()
+            counsel_parts.clear()
+            if said:
+                self.turn_count += 1
+                await self._output_queue.put({"type": "counsel_transcript", "text": said})
+                asyncio.create_task(self._verify_and_emit_citations(said))
 
-                await self._output_queue.put({
-                    "type": "transcript",
-                    "who": who,
-                    "speaker": speaker,
-                    "text": final_text
-                })
-                await self._output_queue.put({
-                    "type": "turn_complete",
-                    "who": who,
-                    "text": final_text
-                })
-                break
+        while self.is_running:
+            async for resp in session.receive():
+                sc = resp.server_content
+                if not sc:
+                    continue
+                if sc.input_transcription and sc.input_transcription.text:
+                    counsel_parts.append(sc.input_transcription.text)
+                    await self._output_queue.put({"type": "counsel_caption", "text": "".join(counsel_parts).strip()})
+                if sc.interrupted:
+                    await self._output_queue.put({"type": "interrupted"})
+                if sc.output_transcription and sc.output_transcription.text:
+                    if counsel_parts:
+                        await flush_counsel()
+                    out_parts.append(sc.output_transcription.text)
+                    accumulated = "".join(out_parts)
+                    who, speaker = self._determine_speaker(accumulated)
+                    await self._output_queue.put({
+                        "type": "caption", "who": who, "speaker": speaker,
+                        "text": self._strip_prefix(accumulated)
+                    })
+                if sc.model_turn:
+                    for part in sc.model_turn.parts or []:
+                        if part.inline_data and part.inline_data.data:
+                            raw = part.inline_data.data
+                            if len(raw) % 2:
+                                raw = raw[:-1]
+                            await self._output_queue.put({"type": "audio", "audio": base64.b64encode(raw).decode("utf-8")})
+                if sc.turn_complete:
+                    await flush_counsel()
+                    full_raw = "".join(out_parts)
+                    out_parts.clear()
+                    if not full_raw.strip():
+                        continue
+                    who, speaker = self._determine_speaker(full_raw)
+                    text = self._strip_prefix(full_raw)
+                    await self._output_queue.put({"type": "transcript", "who": who, "speaker": speaker, "text": text})
+                    await self._output_queue.put({"type": "turn_complete", "who": who, "text": text})
 
     async def _verify_and_emit_citations(self, text: str):
         """Extracts and verifies authorities mentioned in counsel submission."""

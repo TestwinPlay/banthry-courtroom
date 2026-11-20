@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { verifyCitations, evaluateHearing } from '../services/apiService.js';
+import { speakJudgeAudio, cancelJudgeAudio } from '../voice/moot/indianVoiceService.js';
 
 export function useHearingSocket({ onScorecardReady } = {}) {
   const [phase, setPhase] = useState('idle'); // idle | judge | listen | think | done
@@ -79,61 +80,23 @@ export function useHearingSocket({ onScorecardReady } = {}) {
     }
   }, []);
 
-  // 2. High-Fidelity Speech Synthesis for the Judge's Voice
+  // 2. High-Fidelity Indian Speech Synthesis for the Bench
   const speakJudgeVoice = useCallback((text, judgeCode = 'J1') => {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
-
-    try {
-      window.speechSynthesis.cancel(); // Stop any pending speech
-      const utterance = new SpeechSynthesisUtterance(text);
-
-      const voices = window.speechSynthesis.getVoices() || [];
-      // Prefer Indian English voice, then British/UK, then US English
-      const preferredVoice =
-        voices.find((v) => v.lang === 'en-IN' || v.lang.includes('IN')) ||
-        voices.find((v) => v.lang === 'en-GB' || v.lang.includes('GB')) ||
-        voices.find((v) => v.lang.startsWith('en'));
-
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
-      }
-
-      // Voice modulation per judge
-      if (judgeCode === 'J1') {
-        utterance.pitch = 0.88; // Deep, commanding Presiding Judge
-        utterance.rate = 0.95;
-      } else if (judgeCode === 'J2') {
-        utterance.pitch = 1.05; // Sharp Senior Judge
-        utterance.rate = 1.0;
-      } else {
-        utterance.pitch = 1.0; // Calm Puisne Judge
-        utterance.rate = 0.92;
-      }
-
-      utterance.onstart = () => {
+    speakJudgeAudio(text, judgeCode, {
+      onStart: () => {
         setPhase('judge');
         setStatusText('BENCH SPEAKING');
-      };
-
-      utterance.onend = () => {
+      },
+      onEnd: () => {
         setPhase('listen');
         setStatusText('LISTENING');
-      };
-
-      utterance.onerror = (e) => {
-        console.warn('SpeechSynthesis event:', e);
+      },
+      onError: (err) => {
+        console.warn('Speech synthesis notice:', err);
         setPhase('listen');
         setStatusText('LISTENING');
-      };
-
-      window.speechSynthesis.speak(utterance);
-    } catch (err) {
-      console.warn('Speech synthesis error:', err);
-      setTimeout(() => {
-        setPhase('listen');
-        setStatusText('LISTENING');
-      }, 3000);
-    }
+      },
+    });
   }, []);
 
   // 3. Microphone capture: 16 kHz PCM16 mono streaming

@@ -1,12 +1,15 @@
+import json
 from typing import Optional, Dict, Any, List
+from courtroom.config import settings
 
-# In-memory session store of active case propositions
-_ACTIVE_CASES: Dict[str, Dict[str, Any]] = {}
+# In-memory session store of active case propositions, seeded with the default moot problem
+_ACTIVE_CASES: Dict[str, Dict[str, Any]] = {
+    "default": json.loads((settings.data_dir / "default_case.json").read_text(encoding="utf-8"))
+}
 
 
 def register_case_context(session_id: str, case_data: Dict[str, Any]):
     _ACTIVE_CASES[session_id] = case_data
-    _ACTIVE_CASES["default"] = case_data
 
 
 def get_case_data(session_id: str = "default") -> Optional[Dict[str, Any]]:

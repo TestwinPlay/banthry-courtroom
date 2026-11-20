@@ -3,6 +3,7 @@ import os
 import json
 import uuid
 import asyncio
+import base64
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -11,7 +12,9 @@ BACKEND_DIR = Path(__file__).resolve().parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form, Depends
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -28,7 +31,7 @@ from courtroom.agents.evaluator.agent import evaluate_hearing
 from courtroom.agents.memorial_coach.agent import check_memorial
 from courtroom.agents.exhibit_maker.agent import create_stamped_exhibit
 from courtroom.tools.citation_tool import load_judgments_data, check_local_citation
-from courtroom.tools.case_fact_tool import register_case_context
+from courtroom.tools.case_fact_tool import register_case_context, get_case_data
 from courtroom.tools.firestore_client import save_session, get_session, save_scorecard, get_scorecard
 from courtroom.services.adk_live import ADKHearingSession
 
@@ -46,6 +49,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+firebase_admin.initialize_app(options={"projectId": settings.google_cloud_project})
+
+
+def verify_firebase_token(token: str) -> Optional[dict]:
+    """Returns the decoded Firebase ID token, or None when it is missing or invalid."""
+    if not settings.require_auth:
+        return {"uid": "local-dev"}
+    try:
+        return firebase_auth.verify_id_token(token) if token else None
+    except Exception:
+        return None
+
+
+@app.middleware("http")
+async def require_firebase_user(request: Request, call_next):
+    if request.url.path.startswith("/api/"):
+        header = request.headers.get("authorization", "")
+        user = verify_firebase_token(header.removeprefix("Bearer ").strip())
+        if not user:
+            return JSONResponse({"detail": "Sign in required."}, status_code=401)
+        request.state.user = user
+    return await call_next(request)
+
 
 # Active live hearing sessions
 active_sessions: Dict[str, ADKHearingSession] = {}
@@ -110,7 +137,7 @@ async def generate_case_from_judgment(
     case_id = str(uuid.uuid4())
     register_case_context(case_id, problem_data)
     await save_session(case_id, {"case": problem_data})
-    return problem_data
+    return {**problem_data, "id": case_id}
 
 
 @app.post("/api/cases/from-library", response_model=CaseProposition)
@@ -128,6 +155,8 @@ async def generate_case_from_library(case_name: str = "Arnesh Kumar v. State of 
 @app.get("/api/cases/{case_id}")
 async def get_case_by_id(case_id: str):
     """Retrieves a saved moot problem session."""
+    if case_id == "default":
+        return get_case_data("default")
     session = await get_session(case_id)
     if not session or "case" not in session:
         raise HTTPException(status_code=404, detail="Case session not found.")
@@ -236,6 +265,9 @@ async def websocket_hearing_endpoint(websocket: WebSocket, session_id: Optional[
     Server streams back judge transcripts, multi-judge audio, and instant citation flag chips.
     """
     await websocket.accept()
+    if not verify_firebase_token(websocket.query_params.get("token", "")):
+        await websocket.close(code=4401, reason="Sign in required.")
+        return
     sid = session_id or str(uuid.uuid4())
     side = websocket.query_params.get("side", "Petitioner")
     case_id = websocket.query_params.get("case_id", "default")
@@ -276,7 +308,13 @@ async def websocket_hearing_endpoint(websocket: WebSocket, session_id: Optional[
                         raw_bytes = base64.b64decode(payload["audio"])
                         await hearing_session.push_audio(raw_bytes)
                     elif msg_type == "call_witness":
-                        await hearing_session.call_witness(payload.get("name", "Inspector Vikrant Rane"))
+                        await hearing_session.call_witness(payload.get("name", "Inspector Vikrant Rane"), payload.get("role", ""), payload.get("says", ""))
+                    elif msg_type == "release_witness":
+                        await hearing_session.push_action({"type": "system", "action": "release_witness"})
+                    elif msg_type == "tender":
+                        await hearing_session.push_action({"type": "system", "action": "tender", "id": payload.get("id"), "title": payload.get("title", "")})
+                    elif msg_type == "cut_in":
+                        await hearing_session.push_action({"type": "cut_in"})
                     else:
                         await hearing_session.push_text(payload.get("text", str(payload)))
                 except json.JSONDecodeError:
@@ -301,8 +339,11 @@ if dist_path.exists():
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         target = dist_path / full_path
-        if target.exists() and target.is_file():
+        if full_path and target.exists() and target.is_file():
             return FileResponse(target)
+        # /login and /hearing belong to the React app; everything else gets the landing page.
+        if full_path.strip("/") in ("login", "hearing"):
+            return FileResponse(dist_path / "app.html")
         return FileResponse(dist_path / "index.html")
 
 

@@ -53,3 +53,22 @@ async def test_evaluate_endpoint():
         assert "J1" in data["judge_comments"]
         assert "J2" in data["judge_comments"]
         assert "J3" in data["judge_comments"]
+
+
+@pytest.mark.asyncio
+async def test_api_requires_firebase_token(monkeypatch):
+    from courtroom.config import settings
+    monkeypatch.setattr(settings, "require_auth", True)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        assert (await ac.post("/api/verify", json={"text": "x"})).status_code == 401
+        bad = await ac.post("/api/verify", json={"text": "x"}, headers={"Authorization": "Bearer not-a-token"})
+        assert bad.status_code == 401
+        assert (await ac.get("/health")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_default_case_is_served():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        case = (await ac.get("/api/cases/default")).json()
+        assert case["title"] == "Devika Rao v. The State"
+        assert len(case["proposition_paragraphs"]) == 10

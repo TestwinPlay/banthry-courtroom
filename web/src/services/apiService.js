@@ -1,4 +1,17 @@
 // Client API service for Banthry Courtroom
+import { idToken } from '../firebase.js';
+
+// Every /api call carries the Firebase ID token; the backend rejects calls without one.
+async function fetch(url, opts = {}) {
+  const token = await idToken();
+  return window.fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` } });
+}
+
+export async function getCaseById(id = 'default') {
+  const res = await fetch(`/api/cases/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error('Could not load the moot problem');
+  return res.json();
+}
 export async function getCase(prompt) {
   const res = await fetch('/api/case', {
     method: 'POST',

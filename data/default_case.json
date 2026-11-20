@@ -1,0 +1,116 @@
+{
+ "title": "Devika Rao v. The State",
+ "forum": "High Court of Judicature (Criminal Appellate Jurisdiction)",
+ "parties": {
+  "applicant": "Devika Rao",
+  "respondent": "The State"
+ },
+ "disclaimer": "Fictional moot problem. Practice moot court, not legal advice.",
+ "proposition_paragraphs": [
+  {
+   "para_no": 1,
+   "text": "Suryodaya Agro Producers Pvt. Ltd. is a farmer-producer company in Kalyanpur. The Applicant has been its whole-time director since 2019.",
+   "is_key_fact": false
+  },
+  {
+   "para_no": 2,
+   "text": "In June 2024 the State sanctioned an input subsidy of ₹4.2 crore for seed and drip-irrigation kits for 1,200 farmer-members.",
+   "is_key_fact": false
+  },
+  {
+   "para_no": 3,
+   "text": "The subsidy was credited in two tranches, in July and September 2024, to the company’s account at Kalyanpur Co-operative Bank.",
+   "is_key_fact": false
+  },
+  {
+   "para_no": 4,
+   "text": "A January 2025 audit found ₹1.6 crore paid to Harit Supply Solutions LLP — linked to the Applicant’s brother-in-law — for kits 340 farmers say never arrived.",
+   "is_key_fact": false
+  },
+  {
+   "para_no": 5,
+   "text": "On 14 March 2025 FIR No. 117/2025 was registered under ss. 316(5), 318(4) and 61(2) BNS.",
+   "is_key_fact": false
+  },
+  {
+   "para_no": 6,
+   "text": "On 18 March 2025 the IO seized bank statements, the invoice ledger and a server image. The seizure memo (Ex. P-3) bears no date.",
+   "is_key_fact": true
+  },
+  {
+   "para_no": 7,
+   "text": "The State relies on a s. 35(3) BNSS notice dated 20 March 2025, “affixed at residence”. The Applicant says it was never served.",
+   "is_key_fact": true
+  },
+  {
+   "para_no": 8,
+   "text": "On 2 April 2025 the Applicant offered, through counsel, to join investigation. On 5 April the IO moved to arrest her.",
+   "is_key_fact": false
+  },
+  {
+   "para_no": 9,
+   "text": "On 22 April 2025 the Sessions Court refused her anticipatory bail but granted it to co-director Arvind Kulkarni.",
+   "is_key_fact": false
+  },
+  {
+   "para_no": 10,
+   "text": "The State says invoice entries were edited from her login on 10 March 2025. She has deposited ₹50 lakh without prejudice.",
+   "is_key_fact": false
+  }
+ ],
+ "issues": [
+  "Whether pre-arrest bail under s. 482 BNSS ought to be entertained where service of the s. 35(3) notice is disputed.",
+  "Whether custodial interrogation is necessary once the records are seized.",
+  "Whether the material discloses a prima facie offence under ss. 316(5) and 318(4) BNS.",
+  "Whether parity and the ₹50 lakh deposit entitle the Applicant to relief, and on what conditions."
+ ],
+ "statutes": [
+  "s. 482 BNSS — anticipatory bail (formerly s. 438 CrPC).",
+  "s. 35(3)–(6) BNSS — notice of appearance (formerly s. 41A CrPC).",
+  "s. 316(5) BNS — criminal breach of trust by an agent (formerly s. 409 IPC).",
+  "s. 318(4) BNS — cheating and inducing delivery of property (formerly s. 420 IPC).",
+  "Art. 21, Constitution of India — personal liberty."
+ ],
+ "witnesses": [
+  {
+   "name": "Inspector Vikrant Rane",
+   "role": "Investigating Officer, Kalyanpur PS",
+   "statement": "Affixed the s. 35(3) notice at the Applicant's residence on 20 March 2025 after she was not found. Seized bank statements, ledger and server image on 18 March 2025.",
+   "temperament": "defensive",
+   "may_be_pressed_on": "Why the seizure memo is undated; who witnessed the affixation."
+  },
+  {
+   "name": "Sameer Joshi",
+   "role": "Branch Manager, Kalyanpur Co-op Bank",
+   "statement": "Both subsidy tranches were credited to the company account; transfers to Harit Supply Solutions LLP were authorised by two signatories.",
+   "temperament": "neutral",
+   "may_be_pressed_on": "Which two signatories authorised the transfers."
+  }
+ ],
+ "exhibit_prompts": [
+  {
+   "id": "P-1",
+   "title": "FIR No. 117/2025, Kalyanpur Police Station (14 March 2025)",
+   "prompt": "",
+   "type": "FIR"
+  },
+  {
+   "id": "P-2",
+   "title": "Notice under s. 35(3) BNSS (20 March 2025) — “noticee not found, affixed on the door”",
+   "prompt": "",
+   "type": "Notice"
+  },
+  {
+   "id": "P-3",
+   "title": "Seizure memo — date of seizure left blank",
+   "prompt": "",
+   "type": "Seizure memo"
+  },
+  {
+   "id": "P-4",
+   "title": "Departmental audit extract (January 2025)",
+   "prompt": "",
+   "type": "Audit"
+  }
+ ]
+}

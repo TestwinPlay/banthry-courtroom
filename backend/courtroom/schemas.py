@@ -29,6 +29,7 @@ class ExhibitPrompt(BaseModel):
 
 
 class CaseProposition(BaseModel):
+    id: Optional[str] = None
     title: str
     forum: str = "High Court of Judicature"
     parties: Parties
