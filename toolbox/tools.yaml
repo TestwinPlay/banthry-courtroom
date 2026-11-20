@@ -1,0 +1,51 @@
+# ==============================================================================
+# MCP Toolbox for Databases Configuration - Banthry Courtroom
+# Deployed to Cloud Run as a private service
+# ==============================================================================
+
+version: "1.0"
+sources:
+  alloydb:
+    kind: postgres
+    database: courtroom
+    connector:
+      instance_connection_name: banthry-courtroom-2026:us-central1:courtroom-alloydb
+      ip_type: PRIVATE
+
+tools:
+  find_judgment_by_citation:
+    description: "Looks up an authoritative Indian precedent by its law reporter citation (e.g., '(2014) 8 SCC 273')."
+    source: alloydb
+    statement: |
+      SELECT id, title, citation, court, decision_date, source_url, summary
+      FROM judgments
+      WHERE citation ILIKE '%' || :citation || '%'
+      LIMIT 1;
+
+  find_judgment_by_name:
+    description: "Looks up an authoritative Indian precedent by party name or popular mononym (e.g., 'Arnesh Kumar', 'Sibbia')."
+    source: alloydb
+    statement: |
+      SELECT id, title, citation, court, decision_date, source_url, summary
+      FROM judgments
+      WHERE title ILIKE '%' || :name || '%'
+      LIMIT 1;
+
+  similar_paragraphs:
+    description: "Finds semantically similar paragraphs across Indian judgments using pgvector embeddings."
+    source: alloydb
+    statement: |
+      SELECT c.id, c.judgment_id, j.title, j.citation, c.para_no, c.text,
+             1 - (c.embedding <=> embedding('gemini-embedding-2', :text)) AS similarity
+      FROM judgment_chunks c
+      JOIN judgments j ON c.judgment_id = j.id
+      ORDER BY c.embedding <=> embedding('gemini-embedding-2', :text)
+      LIMIT :k;
+
+  get_paragraph:
+    description: "Retrieves an exact paragraph from a judgment by judgment_id and para_no."
+    source: alloydb
+    statement: |
+      SELECT para_no, text
+      FROM judgment_chunks
+      WHERE judgment_id = :judgment_id AND para_no = :para_no;
